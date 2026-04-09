@@ -1,0 +1,13 @@
+[project]
+name = "legalcorpus"
+version = "0.1.0"
+description = "Production-oriented metadata collector for Indian legal and regulatory document corpora."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "beautifulsoup4>=4.14.3",
+    "lxml>=5.4.0",
+    "playwright>=1.53.0",
+    "python-dotenv>=1.1.1",
+    "requests>=2.33.1",
+]
