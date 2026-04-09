@@ -1,34 +1,92 @@
 # LegalCorpus
 
-Python metadata collector for official Indian legal and regulatory documents, with source-specific support for:
+Production-oriented Python pipeline for collecting structured metadata for Indian legal and regulatory documents from official sources.
+
+This repository is built for one-time corpus creation for downstream RAG and knowledge-base systems. It discovers official documents and exports structured metadata only. It does not download PDFs in the current version.
+
+## Features
+
+- Collects metadata from official legal and regulatory sources
+- Uses source-specific collectors instead of generic crawling
+- Supports browser-based collection with Playwright where needed
+- Deduplicates records by canonical document URL
+- Exports both JSONL and CSV
+- Keeps source discovery, extraction, deduplication, and export clearly separated
+
+## Supported Sources
 
 - India Code
 - eGazette of India
 
-The current version discovers documents and exports structured metadata only. It does not download PDFs.
+The architecture is modular so additional official sources can be added later.
 
-## What This Collector Does
+## Scope
 
-1. Discovers official document records from source-specific entry points.
-2. Extracts structured metadata suitable for downstream RAG / knowledge-base ingestion.
-3. Deduplicates records by canonical document URL.
-4. Exports:
-   - `legal_corpus_links.jsonl`
-   - `legal_corpus_links.csv`
+Included:
 
-## Why The Old Scraper Failed
+- Acts
+- Rules
+- Regulations
+- Notifications
+- Orders
+- Circulars
+- Ordinances
+- Statutes
+- Official gazette document metadata
 
-- India Code frequently blocks or degrades plain request-only access for some detail flows.
-- eGazette uses ASP.NET state, sessioned URLs, postbacks, and image-button download controls rather than simple PDF anchors.
-- Generic anchor crawling misses real download/document actions on both sites.
+Excluded in this version:
 
-This project addresses that by using:
+- Criminal-law-focused crawling
+- Civil court judgment collection
+- Full PDF downloads
+- Brute-force guessing of document IDs
+
+## Why This Project Exists
+
+The original scraping approach failed because these sources do not behave like normal static websites:
+
+- India Code can return blocked or degraded responses for some detail-page flows
+- eGazette is an ASP.NET application with state, sessioned URLs, postbacks, popups, and non-anchor PDF actions
+- Generic anchor crawling misses real document and PDF flows
+
+This project solves that by using:
 
 - `requests` where server-rendered HTML is enough
-- Playwright where browser state or rendered interactions are required
-- source-specific parsers instead of a single generic crawler
+- `playwright` where browser state and interaction are required
+- source-specific parsers instead of a generic crawler
 
-## Folder Structure
+## Tech Stack
+
+- Python 3.12+
+- `uv`
+- `requests`
+- `playwright`
+- `beautifulsoup4`
+- `lxml`
+- `python-dotenv`
+
+## Architecture
+
+```text
+main.py
+  -> config.py
+  -> pipeline/discover.py
+      -> sources/indiacode.py
+      -> sources/egazette.py
+      -> utils/http.py
+      -> utils/browser.py
+      -> utils/files.py
+      -> models.py
+```
+
+Responsibilities are separated into:
+
+- Source discovery
+- Metadata extraction
+- Deduplication
+- Export
+
+## Repository Structure
 
 ```text
 .
@@ -53,9 +111,41 @@ This project addresses that by using:
 `-- README.md
 ```
 
+## How It Works
+
+### India Code
+
+- Starts from official Central Act browse pages
+- Paginates using official browse parameters like `offset` and `rpp`
+- Extracts act detail page links from browse tables
+- Visits each act detail page
+- Extracts:
+  - primary act PDFs
+  - subordinate legislation tables such as Rules, Regulations, Notifications, Orders, Circulars, Ordinances, and Statutes
+- Falls back to Playwright when request-based retrieval looks blocked or degraded
+
+### eGazette
+
+- Starts from the official homepage
+- Uses Playwright because the site relies on ASP.NET state and browser interactions
+- Opens official entry points such as Bills & Acts and Land Acquisition
+- Parses structured gazette result tables
+- Resolves real PDF URLs using the official popup flow:
+  - click the official download control
+  - open `ViewPDF.aspx`
+  - read the popup iframe `src`
+  - resolve the final `WriteReadData/...pdf` URL
+
+## Output Files
+
+The pipeline writes:
+
+- `legal_corpus_links.jsonl`
+- `legal_corpus_links.csv`
+
 ## Output Schema
 
-Both JSONL and CSV use these fields:
+Each record contains:
 
 - `source`
 - `title`
@@ -68,19 +158,23 @@ Both JSONL and CSV use these fields:
 - `anchor_text`
 - `crawl_timestamp`
 
-## Install
+## Installation
+
+### 1. Install dependencies
 
 ```powershell
 uv sync
 ```
 
-If Playwright cannot launch your local Edge installation, install Chromium for Playwright:
+### 2. Install Playwright browser if needed
+
+If Playwright cannot launch the local browser:
 
 ```powershell
 uv run playwright install chromium
 ```
 
-## Configure
+## Configuration
 
 Optional:
 
@@ -88,14 +182,24 @@ Optional:
 Copy-Item .env.example .env
 ```
 
-Defaults are already aimed at Windows + `uv` usage. On Windows, the browser launcher defaults to `msedge` if available.
+Main runtime settings live in `.env.example`.
 
-Useful eGazette tuning knobs for staged runs:
+Useful knobs:
+
+- `LEGAL_CORPUS_SOURCES`
+- `LEGAL_CORPUS_OUTPUT_DIR`
+- `LEGAL_CORPUS_BROWSER_HEADLESS`
+- `LEGAL_CORPUS_INDIACODE_MAX_BROWSE_PAGES`
+- `LEGAL_CORPUS_EGAZETTE_MAX_LISTING_PAGES`
+- `LEGAL_CORPUS_EGAZETTE_ENTRYPOINTS`
+- `LEGAL_CORPUS_EGAZETTE_MAX_ROWS_PER_PAGE`
+
+Useful eGazette staged-run values:
 
 - `LEGAL_CORPUS_EGAZETTE_ENTRYPOINTS=Bills & Acts`
 - `LEGAL_CORPUS_EGAZETTE_MAX_ROWS_PER_PAGE=25`
 
-## Run
+## Usage
 
 Run both sources:
 
@@ -115,71 +219,87 @@ Run only eGazette:
 uv run main.py --sources egazette
 ```
 
-Run with a visible browser for debugging:
+Run with a visible browser:
 
 ```powershell
 uv run main.py --headed
 ```
 
-Write outputs to a different folder:
+Write outputs to a different directory:
 
 ```powershell
 uv run main.py --output-dir .\out
 ```
 
-## How Each Source Works
+## Recommended First Run
 
-### India Code
-
-- Starts from official Central Act browse pages
-- Walks browse pagination via `offset` and `rpp`
-- Opens act detail pages
-- Extracts primary act PDFs from the detail view
-- Extracts subordinate legislation from source-specific tables such as Rules, Regulations, Notifications, Orders, Circulars, Ordinances, and Statutes
-- Falls back to Playwright when request-based fetches are blocked or degraded
-
-### eGazette
-
-- Starts from the official homepage
-- Uses Playwright because the site relies on sessioned URLs, ASP.NET postbacks, and download controls
-- Parses homepage recent gazettes, official category entry points, and navigable search/directory paths
-- Extracts real download URLs by triggering the official download control without adding a PDF download stage to the pipeline
-- Uses safe page-pattern and pagination heuristics instead of brute-forcing opaque IDs
-
-## Testing On Your Machine
-
-### Quick smoke test
-
-1. Run India Code only:
+India Code smoke test:
 
 ```powershell
 uv run main.py --sources indiacode
 ```
 
-2. Confirm these files were created:
-
-```powershell
-Get-Item .\legal_corpus_links.jsonl, .\legal_corpus_links.csv
-```
-
-3. Inspect the first few JSONL rows:
+Inspect first rows:
 
 ```powershell
 Get-Content .\legal_corpus_links.jsonl -TotalCount 5
 ```
 
-### eGazette verification
-
-Run with a headed browser so you can observe navigation:
+Constrained eGazette smoke test:
 
 ```powershell
-uv run main.py --sources egazette --headed
+$env:LEGAL_CORPUS_EGAZETTE_ENTRYPOINTS='Bills & Acts'
+$env:LEGAL_CORPUS_EGAZETTE_MAX_ROWS_PER_PAGE='5'
+$env:LEGAL_CORPUS_EGAZETTE_MAX_LISTING_PAGES='1'
+$env:LEGAL_CORPUS_EGAZETTE_MAX_FOLLOW_LINKS_PER_ENTRYPOINT='0'
+uv run main.py --sources egazette
 ```
 
-You should see the browser open the official eGazette homepage, move through official entry points, and export records with populated `pdf_url` values where the site exposes them through the download control.
+## Logging and Summary
 
-## Notes
+At the end of a run, the collector prints:
 
-- No PDF downloader is implemented in this version.
-- Deduplication is by canonical document URL, with source-aware normalization for sessioned eGazette paths and India Code handle variants.
-- The pipeline is intentionally conservative about where it navigates and does not brute-force guessed document IDs.
+- `pages_visited`
+- `documents_found`
+- `pdfs_found`
+- `failures`
+
+It also prints the final JSONL and CSV paths.
+
+## Current Status
+
+### India Code
+
+India Code is currently the stronger implementation and has already produced large metadata exports successfully from real official browse and detail pages.
+
+### eGazette
+
+eGazette support is working and resolves real PDF URLs from official download flows, but coverage is still less complete than India Code because the site is more stateful and navigation-heavy.
+
+## Known Limitations
+
+- No PDF downloader in this version
+- Some `document_type` values are heuristic classifications
+- Some `year` extraction is best-effort, not source-perfect
+- eGazette coverage is currently partial compared to India Code
+
+## Design Principles
+
+- Use official entry points only
+- Avoid abusive request patterns
+- Do not brute-force unknown IDs
+- Prefer structured parsing over generic crawling
+- Use browser automation only where it is actually needed
+- Keep output simple and ingestion-friendly
+
+## Future Improvements
+
+- Add more official Indian legal and regulatory sources
+- Improve eGazette entry-point coverage and navigation stability
+- Improve metadata normalization for type and year
+- Add optional incremental runs
+- Add optional PDF download as a separate later stage
+
+## License
+
+Add your preferred license before publishing the repository.
